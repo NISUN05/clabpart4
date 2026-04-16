@@ -28,25 +28,29 @@ free_header_t *flists[NLISTS];
 void *init_mem_lo;
 
 // Remove node n from the doubly-linked list headed by *head.
-void
-list_remove(free_header_t **head, free_header_t *n)
+void list_remove(free_header_t **head, free_header_t *n)
 {
-    if (n->prev) n->prev->next = n->next;
-    else *head = n->next;
+    if (n->prev) {
+        n->prev->next = n->next;
+    } else {
+        *head = n->next;
+    }
 
-    if (n->next) n->next->prev = n->prev;
+    if (n->next) {
+        n->next->prev = n->prev;
+    }
 
-    n->prev = NULL;
-    n->next = NULL;
+    n->prev = n->next = NULL;
 }
 // Prepend node n to the doubly-linked list headed by *head.
-void
-list_insert(free_header_t **head, free_header_t *n)
+void list_insert(free_header_t **head, free_header_t *n)
 {
-    n->prev = NULL;
     n->next = *head;
+    n->prev = NULL;
 
-    if (*head) (*head)->prev = n;
+    if (*head != NULL) {
+        (*head)->prev = n;
+    }
 
     *head = n;
 }
@@ -58,22 +62,22 @@ get_buddy(header_t *h, int size_class)
 {
     size_t block_size = (size_t)1 << size_class;
 
-    char *base = (char *)init_mem_lo;
-    char *addr = (char *)h;
+    uintptr_t offset = (uintptr_t)h - (uintptr_t)init_mem_lo;
+    uintptr_t buddy_offset = offset ^ block_size;
 
-    char *buddy = base + ((addr - base) ^ block_size);
+    header_t *buddy = (header_t *)((char *)init_mem_lo + buddy_offset);
 
-    if (buddy < (char *)mem_heap_lo() || buddy > (char *)mem_heap_hi()) {
+    // must be within heap
+    if ((void *)buddy < mem_heap_lo() || (void *)buddy >= mem_heap_hi()) {
         return NULL;
     }
 
-    return (header_t *)buddy;
+    return buddy;
 }
 
 // Given a payload pointer, return a pointer to the chunk's header.
 // The header immediately precedes the payload.
-header_t *
-payload2header(void *p)
+header_t *payload2header(void *p)
 {
     return (header_t *)((char *)p - sizeof(header_t));
 }
@@ -123,17 +127,16 @@ mm_checkheap(bool verbose)
 free_header_t *
 ask_os_for_block(size_t size_class)
 {
-    size_t block_size = (size_t)1 << size_class;
+    size_t size = (size_t)1 << size_class;
 
-    void *p = mem_sbrk(block_size);
+    void *p = mem_sbrk(size);
     if (p == (void *)-1) return NULL;
 
     free_header_t *h = (free_header_t *)p;
 
     h->header.size_class = size_class;
     h->header.allocated = false;
-    h->prev = NULL;
-    h->next = NULL;
+    h->prev = h->next = NULL;
 
     return h;
 }
@@ -188,7 +191,6 @@ split_n_alloc(free_header_t *h, int size_class)
         return &h->header;
     }
 
-    int old = h->header.size_class;
     h->header.size_class--;
 
     free_header_t *buddy = (free_header_t *)get_buddy(&h->header, h->header.size_class);
@@ -201,7 +203,6 @@ split_n_alloc(free_header_t *h, int size_class)
 
     return split_n_alloc(h, size_class);
 }
-
 // Try to merge free block *fh with its buddy (in either direction).
 //
 // Returns true if the merge succeeded (caller should call again to keep
@@ -216,32 +217,28 @@ split_n_alloc(free_header_t *h, int size_class)
 //   5. Increment (*fh)->header.size_class (the merged block is one class larger).
 //   6. Return true.
 
-    bool
-coalesce(free_header_t **fh)
+    bool coalesce(free_header_t **fh)
 {
     header_t *h = &(*fh)->header;
 
-    header_t *buddy = get_buddy(h, h->size_class);
-    if (!buddy) return false;
+    header_t *b = get_buddy(h, h->size_class);
+    if (!b) return false;
 
-    free_header_t *b = (free_header_t *)buddy;
+    free_header_t *buddy = (free_header_t *)b;
 
-    if (b->header.allocated) return false;
-    if (b->header.size_class != h->size_class) return false;
+    if (buddy->header.allocated) return false;
+    if (buddy->header.size_class != h->size_class) return false;
 
-    // remove buddy
-    list_remove(&flists[b->header.size_class - MINSZ], b);
+    list_remove(&flists[buddy->header.size_class - MINSZ], buddy);
 
-    // choose lower address
-    if ((uintptr_t)b < (uintptr_t)*fh) {
-        *fh = b;
+    if ((uintptr_t)buddy < (uintptr_t)*fh) {
+        *fh = buddy;
     }
 
     (*fh)->header.size_class++;
 
     return true;
 }
-
 // Allocate a block of the given payload size and return a pointer to the payload.
 //
 // Logic:
@@ -255,30 +252,28 @@ coalesce(free_header_t **fh)
 //      since ask_os_for_block returns a block that is not yet allocated).
 //   4. Compute and return the payload pointer: (char *)allocated_header + sizeof(header_t).
 
-    void *
+   void *
 mm_malloc(size_t size)
 {
     size_t sc = get_size_class(size);
 
-    // search free lists
     for (size_t i = sc - MINSZ; i < NLISTS; i++) {
-        if (flists[i] != NULL) {
+        if (flists[i]) {
             free_header_t *h = flists[i];
             list_remove(&flists[i], h);
-            header_t *a = split_n_alloc(h, sc);
 
+            header_t *a = split_n_alloc(h, sc);
             a->allocated = true;
-            return (void *)((char *)a + sizeof(header_t));
+
+            return (char *)a + sizeof(header_t);
         }
     }
 
-    // no free block → ask OS
     free_header_t *h = ask_os_for_block(sc);
     h->header.allocated = true;
 
-    return (void *)((char *)&h->header + sizeof(header_t));
+    return (char *)&h->header + sizeof(header_t);
 }
-
 
 // Free a previously allocated block and coalesce with buddies.
 //
