@@ -57,22 +57,25 @@ void list_insert(free_header_t **head, free_header_t *n)
 
 // Return the buddy of chunk h at the given size_class, or NULL if the
 // buddy address falls outside the current heap bounds.
-header_t *get_buddy(header_t *h, int size_class)
+#include <stdint.h>   // IMPORTANT (if not already included)
+
+header_t *
+get_buddy(header_t *h, int size_class)
 {
-    uintptr_t block_size = (uintptr_t)1 << size_class;
+    size_t block_size = (size_t)1 << size_class;
 
     uintptr_t offset = (uintptr_t)h - (uintptr_t)init_mem_lo;
     uintptr_t buddy_offset = offset ^ block_size;
 
-    uintptr_t heap_lo = (uintptr_t)mem_heap_lo();
-    uintptr_t heap_hi = (uintptr_t)mem_heap_hi();
+    uintptr_t buddy_addr = (uintptr_t)init_mem_lo + buddy_offset;
 
-    if ((uintptr_t)init_mem_lo + buddy_offset < heap_lo ||
-        (uintptr_t)init_mem_lo + buddy_offset > heap_hi) {
+    // valid heap range check
+    if (buddy_addr < (uintptr_t)mem_heap_lo() ||
+        buddy_addr > (uintptr_t)mem_heap_hi()) {
         return NULL;
     }
 
-    return (header_t *)((char *)init_mem_lo + buddy_offset);
+    return (header_t *)buddy_addr;
 }
 
 // Given a payload pointer, return a pointer to the chunk's header.
@@ -182,18 +185,22 @@ ask_os_for_block(size_t size_class)
 //
 // Precondition: h is not allocated, h->header.size_class >= size_class.
 
-    header_t *split_n_alloc(free_header_t *h, int size_class)
+    header_t *
+split_n_alloc(free_header_t *h, int size_class)
 {
     if (h->header.size_class == size_class) {
         h->header.allocated = true;
         return &h->header;
     }
 
-    h->header.size_class--;
+    int old_class = h->header.size_class;
+
+    h->header.size_class = old_class - 1;
 
     free_header_t *buddy =
         (free_header_t *)get_buddy(&h->header, h->header.size_class);
 
+    // buddy must exist in heap (safe assumption in this lab)
     buddy->header.size_class = h->header.size_class;
     buddy->header.allocated = false;
     buddy->prev = buddy->next = NULL;
@@ -220,16 +227,16 @@ ask_os_for_block(size_t size_class)
 {
     header_t *h = &(*fh)->header;
 
-    header_t *b = get_buddy(h, h->size_class);
-    if (!b) return false;
+    free_header_t *buddy =
+        (free_header_t *)get_buddy(h, h->size_class);
 
-    free_header_t *buddy = (free_header_t *)b;
-
+    if (!buddy) return false;
     if (buddy->header.allocated) return false;
     if (buddy->header.size_class != h->size_class) return false;
 
     list_remove(&flists[buddy->header.size_class - MINSZ], buddy);
 
+    // ensure lower address becomes base
     if ((uintptr_t)buddy < (uintptr_t)*fh) {
         *fh = buddy;
     }
@@ -251,10 +258,9 @@ ask_os_for_block(size_t size_class)
 //      since ask_os_for_block returns a block that is not yet allocated).
 //   4. Compute and return the payload pointer: (char *)allocated_header + sizeof(header_t).
 
-   void *mm_malloc(size_t size)
+   void *
+mm_malloc(size_t size)
 {
-    if (size == 0) return NULL;
-
     size_t sc = get_size_class(size);
 
     for (size_t i = sc - MINSZ; i < NLISTS; i++) {
@@ -303,9 +309,11 @@ mm_free(void *p)
 // Special cases:
 //   - If p is NULL, behave like mm_malloc(size).
 //   - If size is 0 and p is not NULL, behave like mm_free(p) and return NULL.
-void *mm_realloc(void *p, size_t size)
+void *
+mm_realloc(void *p, size_t size)
 {
     if (!p) return mm_malloc(size);
+
     if (size == 0) {
         mm_free(p);
         return NULL;
@@ -313,7 +321,7 @@ void *mm_realloc(void *p, size_t size)
 
     header_t *h = payload2header(p);
 
-    size_t old_payload = ((size_t)1 << h->size_class) - sizeof(header_t);
+    size_t old_payload = (1 << h->size_class) - sizeof(header_t);
     size_t new_payload = size;
 
     void *newp = mm_malloc(size);
