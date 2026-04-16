@@ -23,7 +23,7 @@ size_t hdr_size = sizeof(meta_t);
 void 
 set_size_status(meta_t *h, size_t csz, bool allocated)
 {
-      h->size_status = csz | (allocated ? 1 : 0);
+     *h = csz | (allocated ? 1 : 0);
 }
 
 // helper function to extract the chunk size information from the 
@@ -31,7 +31,7 @@ set_size_status(meta_t *h, size_t csz, bool allocated)
 size_t
 get_size(meta_t *h)
 {
-    return h->size_status & ~((size_t)1);
+    return *h & ~((size_t)1);
 }
 
 // helper function to extract the status (allocated or free) information 
@@ -39,7 +39,7 @@ get_size(meta_t *h)
 bool
 get_status(meta_t *h)
 {
-   return (h->size_status & 1) == 1;
+   return (*h & 1) == 1;
 }
 
 // helper function to set the status information in the header/footer
@@ -47,10 +47,11 @@ get_status(meta_t *h)
 void
 set_status(meta_t *h, bool allocated)
 {
-    if (allocated) {
-        h->size_status |= (size_t)1;          // set LSB
+   if (allocated) {
+        *h |= (size_t)1;
     } else {
-        h->size_status &= ~((size_t)1);  
+        *h &= ~((size_t)1);
+    }  
 }
 
 // helper function that returns a pointer to the footer of a chunk 
@@ -180,14 +181,14 @@ mm_checkheap(bool verbose)
  
         // Verify footer matches header
         meta_t *footer = header2footer(h);
-        assert(footer->size_status == h->size_status);
+        assert(*footer == *h);
  
         if (status) {
             info.allocated_size += csz;
-            info.allocated_cnt++;
+            info.num_allocated_chunks++;
         } else {
             info.free_size += csz;
-            info.free_cnt++;
+            info.num_free_chunks++;
         }
  
         if (verbose) {
@@ -362,9 +363,6 @@ mm_realloc(void *ptr, size_t size)
     // If size is 0, equivalent to free(ptr)
     if (size == 0) {
         mm_free(ptr);
-        if (debug) {
-            mm_checkheap(true);
-        }
         return NULL;
     }
  
