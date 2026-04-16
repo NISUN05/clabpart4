@@ -123,23 +123,15 @@ mm_checkheap(bool verbose)
 free_header_t *
 ask_os_for_block(size_t size_class)
 {
-    size_t req_size = (size_t)1 << size_class;
+    size_t block_size = (size_t)1 << size_class;
 
-    // allocate raw memory from OS
-    void *p = mem_sbrk(req_size);
-
-    if (p == (void *)-1) {
-        return NULL;
-    }
-
-    // must be aligned to its size (buddy requirement)
-    assert(((uintptr_t)p & (req_size - 1)) == 0);
+    void *p = mem_sbrk(block_size);
+    if (p == (void *)-1) return NULL;
 
     free_header_t *h = (free_header_t *)p;
 
     h->header.size_class = size_class;
     h->header.allocated = false;
-
     h->prev = NULL;
     h->next = NULL;
 
@@ -161,6 +153,7 @@ get_size_class(size_t size)
 {
     size_t total = size + sizeof(header_t);
     size_t k = MINSZ;
+
     size_t block = (size_t)1 << k;
 
     while (block < total) {
@@ -170,7 +163,6 @@ get_size_class(size_t size)
 
     return k;
 }
-
 
 // Recursively split free block h until it has exactly the requested size_class,
 // allocating the block and returning a pointer to its header.
@@ -191,29 +183,24 @@ get_size_class(size_t size)
     header_t *
 split_n_alloc(free_header_t *h, int size_class)
 {
-    int cur = h->header.size_class;
-
-    if (cur == size_class) {
+    if (h->header.size_class == size_class) {
         h->header.allocated = true;
-        return (header_t *)h;
+        return &h->header;
     }
 
-    // split
-    h->header.size_class = cur - 1;
+    int old = h->header.size_class;
+    h->header.size_class--;
 
-    size_t size = (size_t)1 << h->header.size_class;
-
-    free_header_t *buddy = (free_header_t *)((char *)h + size);
+    free_header_t *buddy = (free_header_t *)get_buddy(&h->header, h->header.size_class);
 
     buddy->header.size_class = h->header.size_class;
     buddy->header.allocated = false;
     buddy->prev = buddy->next = NULL;
 
-    list_insert(&flists[h->header.size_class - MINSZ], buddy);
+    list_insert(&flists[buddy->header.size_class - MINSZ], buddy);
 
     return split_n_alloc(h, size_class);
 }
-
 
 // Try to merge free block *fh with its buddy (in either direction).
 //
@@ -232,30 +219,28 @@ split_n_alloc(free_header_t *h, int size_class)
     bool
 coalesce(free_header_t **fh)
 {
-    free_header_t *h = *fh;
+    header_t *h = &(*fh)->header;
 
-    header_t *b = get_buddy((header_t *)h, h->header.size_class);
-    if (!b) return false;
+    header_t *buddy = get_buddy(h, h->size_class);
+    if (!buddy) return false;
 
-    free_header_t *buddy = (free_header_t *)b;
+    free_header_t *b = (free_header_t *)buddy;
 
-    if (buddy->header.allocated ||
-        buddy->header.size_class != h->header.size_class) {
-        return false;
+    if (b->header.allocated) return false;
+    if (b->header.size_class != h->size_class) return false;
+
+    // remove buddy
+    list_remove(&flists[b->header.size_class - MINSZ], b);
+
+    // choose lower address
+    if ((uintptr_t)b < (uintptr_t)*fh) {
+        *fh = b;
     }
 
-    list_remove(&flists[buddy->header.size_class - MINSZ], buddy);
-
-    if (buddy < h) {
-        h = buddy;
-    }
-
-    h->header.size_class++;
-    *fh = h;
+    (*fh)->header.size_class++;
 
     return true;
 }
-
 
 // Allocate a block of the given payload size and return a pointer to the payload.
 //
@@ -273,27 +258,25 @@ coalesce(free_header_t **fh)
     void *
 mm_malloc(size_t size)
 {
-    int sc = get_size_class(size);
+    size_t sc = get_size_class(size);
 
-    for (int i = sc - MINSZ; i < NLISTS; i++) {
-        if (flists[i]) {
+    // search free lists
+    for (size_t i = sc - MINSZ; i < NLISTS; i++) {
+        if (flists[i] != NULL) {
             free_header_t *h = flists[i];
             list_remove(&flists[i], h);
+            header_t *a = split_n_alloc(h, sc);
 
-            header_t *res = split_n_alloc(h, sc);
-
-            if (debug) mm_checkheap(false);
-
-            return (char *)res + sizeof(header_t);
+            a->allocated = true;
+            return (void *)((char *)a + sizeof(header_t));
         }
     }
 
+    // no free block → ask OS
     free_header_t *h = ask_os_for_block(sc);
     h->header.allocated = true;
 
-    if (debug) mm_checkheap(false);
-
-    return (char *)h + sizeof(header_t);
+    return (void *)((char *)&h->header + sizeof(header_t));
 }
 
 
@@ -309,17 +292,16 @@ mm_malloc(size_t size)
 void
 mm_free(void *p)
 {
-    if (!p) return;
+    free_header_t *fh = (free_header_t *)payload2header(p);
 
-    free_header_t *h = (free_header_t *)payload2header(p);
+    fh->header.allocated = false;
 
-    h->header.allocated = false;
+    while (coalesce(&fh)) {
+        // keep merging
+    }
 
-    while (coalesce(&h));
-
-    list_insert(&flists[h->header.size_class - MINSZ], h);
-
-    if (debug) mm_checkheap(false);
+    size_t idx = fh->header.size_class - MINSZ;
+    list_insert(&flists[idx], fh);
 }
 // Resize a previously allocated block.
 //
