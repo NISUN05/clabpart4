@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "mm-common.h"
 #include "mm-buddy.h"
@@ -154,9 +155,7 @@ ask_os_for_block(size_t size_class)
 // size + sizeof(header_t) bytes (with one extra doubling for exact powers).
 //
 // Note: size_class must always be >= MINSZ so the chunk can hold a free_header_t.
-size_t
-get_size_class(size_t size)
-{
+
     size_t
 get_size_class(size_t size)
 {
