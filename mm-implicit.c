@@ -230,17 +230,14 @@ split(meta_t *original, size_t csz)
     size_t orig_csz = get_size(original);
     bool status = get_status(original);
 
-    // Not enough space to split
     if (orig_csz < csz + 2 * hdr_size + ALIGNMENT) {
         return;
     }
 
     size_t remainder = orig_csz - csz;
 
-    // First chunk keeps SAME status
     init_chunk(original, csz, status);
 
-    // Second chunk is ALWAYS free
     meta_t *new_chunk = (meta_t *)((char *)original + csz);
     init_chunk(new_chunk, remainder, false);
 }
