@@ -227,18 +227,20 @@ first_fit(size_t csz)
 void
 split(meta_t *original, size_t csz)
 {
-	 size_t orig_csz = get_size(original);
-    size_t remainder = orig_csz - csz;
- 
-    // Only split if the remainder is large enough to hold a valid (header+footer) chunk
-    if (remainder < 2 * hdr_size + ALIGNMENT) {
-        // Not enough room to split — leave original size intact
+    size_t orig_csz = get_size(original);
+    bool status = get_status(original);
+
+    // Not enough space to split
+    if (orig_csz < csz + 2 * hdr_size + ALIGNMENT) {
         return;
     }
- 
-    init_chunk(original, csz, true);
- 
-    // Initialize the new free chunk with the remaining bytes
+
+    size_t remainder = orig_csz - csz;
+
+    // First chunk keeps SAME status
+    init_chunk(original, csz, status);
+
+    // Second chunk is ALWAYS free
     meta_t *new_chunk = (meta_t *)((char *)original + csz);
     init_chunk(new_chunk, remainder, false);
 }
@@ -247,28 +249,26 @@ split(meta_t *original, size_t csz)
 
 //mm_malloc allocates a memory block of size bytes
 //and returns a pointer aligned to ALIGNMENT
-void *
-mm_malloc(size_t size)
+void
+split(meta_t *original, size_t csz)
 {
-size_t csz = align(size + 2 * hdr_size);
+    size_t orig_csz = get_size(original);
+    bool status = get_status(original);
 
-    meta_t *p = first_fit(csz);
-
-    if (p != NULL) {
-        split(p, csz);
-        init_chunk(p, csz, true);
-    } else {
-        p = ask_os_for_chunk(csz);
-        init_chunk(p, csz, true);
+    // Not enough space to split
+    if (orig_csz < csz + 2 * hdr_size + ALIGNMENT) {
+        return;
     }
 
-    if (debug) {
-        mm_checkheap(true);
-    }
+    size_t remainder = orig_csz - csz;
 
-    return (void *)((char *)p + hdr_size);
+    // First chunk keeps SAME status
+    init_chunk(original, csz, status);
+
+    // Second chunk is ALWAYS free
+    meta_t *new_chunk = (meta_t *)((char *)original + csz);
+    init_chunk(new_chunk, remainder, false);
 }
-
 // helper function to merge the current chunk with the next/following chunk
 // if the next chunk is free, and returns a pointer to the merged chunk's header.
 // You only need to consider merging with the immediate next chunk because 
@@ -313,23 +313,21 @@ coalesce_prev(meta_t *h)
 void 
 mm_free(void *p)
 {
-	// 1. Obtain pointer to current chunk's header
+    if (p == NULL) return;
+
     meta_t *h = payload2header(p);
- 
-    // 2. Set current chunk's status (header AND footer) to "free"
-    set_status(h, false);
-    set_status(header2footer(h), false);
- 
-    // 3. Coalesce with next chunk if it is free
+
+    // mark free
+    init_chunk(h, get_size(h), false);
+
+    // coalesce in correct order
     h = coalesce_prev(h);
     h = coalesce_next(h);
-    (void)h; // suppress unused variable warning
- 
-    // After freeing the chunk, check heap correctness to catch bugs
+
     if (debug) {
         mm_checkheap(true);
     }
-}	
+}
 
 // mm_realloc changes the size of a previous allocation (pointed to by ptr) to size bytes,  
 // and returns a pointer to the new allocation.
@@ -342,42 +340,50 @@ mm_free(void *p)
 void *
 mm_realloc(void *ptr, size_t size)
 {
-	 // If ptr is NULL, equivalent to malloc(size)
     if (ptr == NULL) {
         return mm_malloc(size);
     }
- 
-    // If size is 0, equivalent to free(ptr)
+
     if (size == 0) {
         mm_free(ptr);
         return NULL;
     }
- 
-    // Allocate a new block of the requested size
+
+    meta_t *h = payload2header(ptr);
+    size_t old_csz = get_size(h);
+    size_t new_csz = align(size + 2 * hdr_size);
+
+    // Case 1: already big enough
+    if (old_csz >= new_csz) {
+        return ptr;
+    }
+
+    // Case 2: try to expand into next free chunk
+    meta_t *next = next_chunk_header(h);
+    if (next != NULL && !get_status(next)) {
+        size_t combined = old_csz + get_size(next);
+
+        if (combined >= new_csz) {
+            // merge with next
+            init_chunk(h, combined, true);
+
+            // optionally split if extra space
+            split(h, new_csz);
+            init_chunk(h, new_csz, true);
+
+            return ptr;
+        }
+    }
+
+    // Case 3: fallback → allocate new block
     void *new_ptr = mm_malloc(size);
-    if (new_ptr == NULL) {
-        return NULL;
-    }
- 
-    // Copy contents — minimum of old payload size and new payload size
-    meta_t *old_header = payload2header(ptr);
-    size_t old_payload_size = get_size(old_header) - 2 * hdr_size;
-    size_t new_payload_size = align(size);
-    size_t copy_size = old_payload_size < new_payload_size
-                       ? old_payload_size
-                       : new_payload_size;
- 
+    if (new_ptr == NULL) return NULL;
+
+    size_t old_payload = old_csz - 2 * hdr_size;
+    size_t copy_size = old_payload < size ? old_payload : size;
+
     memmove(new_ptr, ptr, copy_size);
- 
-    // Free the old block
     mm_free(ptr);
- 
-    // Check heap correctness after realloc to catch bugs
-    if (debug) {
-        mm_checkheap(true);
-    }
+
     return new_ptr;
 }
-
-
-
