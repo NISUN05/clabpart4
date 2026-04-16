@@ -252,7 +252,7 @@ split(meta_t *original, size_t csz)
 void *
 mm_malloc(size_t size)
 {
-  / Make requested payload size aligned
+  // Make requested payload size aligned
     size = align(size);
     // Chunk size includes header + footer
     size_t csz = 2*hdr_size + size;
