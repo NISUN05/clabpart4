@@ -84,7 +84,7 @@ next_chunk_header(meta_t *h)
    size_t csz = get_size(h);
     meta_t *next = (meta_t *)((char *)h + csz);
     // If the calculated pointer is at or beyond the high watermark, there is no next chunk
-    if ((void *)next >= mem_heap_hi()) {
+    if ((void *)next > mem_heap_hi()) {
         return NULL;
     }
     return next;
@@ -231,14 +231,12 @@ split(meta_t *original, size_t csz)
     size_t remainder = orig_csz - csz;
  
     // Only split if the remainder is large enough to hold a valid (header+footer) chunk
-    if (remainder < 2 * hdr_size) {
+    if (remainder < 2 * hdr_size + ALIGNMENT) {
         // Not enough room to split — leave original size intact
         return;
     }
  
-    // Shrink the original chunk to csz
-    bool orig_status = get_status(original);
-    init_chunk(original, csz, orig_status);
+    init_chunk(original, csz, true);
  
     // Initialize the new free chunk with the remaining bytes
     meta_t *new_chunk = (meta_t *)((char *)original + csz);
@@ -252,31 +250,22 @@ split(meta_t *original, size_t csz)
 void *
 mm_malloc(size_t size)
 {
-  // Make requested payload size aligned
-    size = align(size);
-    // Chunk size includes header + footer
-    size_t csz = 2*hdr_size + size;
- 
+size_t csz = align(size + 2 * hdr_size);
+
     meta_t *p = first_fit(csz);
- 
+
     if (p != NULL) {
-        // Found a free chunk — split it if possible, then mark allocated
         split(p, csz);
-        set_status(p, true);
-        set_status(header2footer(p), true);
+        init_chunk(p, csz, true);
     } else {
-        // No suitable free chunk; ask OS for more memory
         p = ask_os_for_chunk(csz);
-        set_status(p, true);
-        set_status(header2footer(p), true);
+        init_chunk(p, csz, true);
     }
- 
-    // After finishing obtaining free chunk p,
-    // check heap correctness to catch bugs
+
     if (debug) {
         mm_checkheap(true);
     }
-    // Return pointer to payload (just after the header)
+
     return (void *)((char *)p + hdr_size);
 }
 
@@ -332,10 +321,8 @@ mm_free(void *p)
     set_status(header2footer(h), false);
  
     // 3. Coalesce with next chunk if it is free
-    h = coalesce_next(h);
- 
-    // 4. Coalesce with previous chunk if it is free
     h = coalesce_prev(h);
+    h = coalesce_next(h);
     (void)h; // suppress unused variable warning
  
     // After freeing the chunk, check heap correctness to catch bugs
