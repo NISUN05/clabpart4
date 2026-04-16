@@ -30,14 +30,26 @@ void *init_mem_lo;
 void
 list_remove(free_header_t **head, free_header_t *n)
 {
-    //Your code here
-}
+    if (n->prev) n->prev->next = n->next;
+    else *head = n->next;
 
+    if (n->next) n->next->prev = n->prev;
+
+    n->prev = NULL;
+    n->next = NULL;
+}
 // Prepend node n to the doubly-linked list headed by *head.
 void
 list_insert(free_header_t **head, free_header_t *n)
 {
-    //Your code here
+    n->next = *head;
+    n->prev = NULL;
+
+    if (*head) {
+        (*head)->prev = n;
+    }
+
+    *head = n;
 }
 
 // Return the buddy of chunk h at the given size_class, or NULL if the
@@ -53,9 +65,8 @@ get_buddy(header_t *h, int size_class)
 header_t *
 payload2header(void *p)
 {
-    //Your code here
+    return (header_t *)((char *)p - sizeof(header_t));
 }
-
 // mm_init is called once before the first malloc/free/realloc call.
 // It zeroes all free lists and records the heap base address.
 // Its implementation is given below
