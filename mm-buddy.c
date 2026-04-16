@@ -170,7 +170,7 @@ get_size_class(size_t size)
 
     return k;
 }
-}
+
 
 // Recursively split free block h until it has exactly the requested size_class,
 // allocating the block and returning a pointer to its header.
@@ -187,9 +187,7 @@ get_size_class(size_t size)
 //   5. Recurse: return split_n_alloc(h, size_class).
 //
 // Precondition: h is not allocated, h->header.size_class >= size_class.
-header_t *
-split_n_alloc(free_header_t *h, int size_class)
-{
+
     header_t *
 split_n_alloc(free_header_t *h, int size_class)
 {
@@ -215,7 +213,7 @@ split_n_alloc(free_header_t *h, int size_class)
 
     return split_n_alloc(h, size_class);
 }
-}
+
 
 // Try to merge free block *fh with its buddy (in either direction).
 //
@@ -230,9 +228,7 @@ split_n_alloc(free_header_t *h, int size_class)
 //   4. If buddy < *fh, store it so *fh points to the lower-addressed block.
 //   5. Increment (*fh)->header.size_class (the merged block is one class larger).
 //   6. Return true.
-bool
-coalesce(free_header_t **fh)
-{
+
     bool
 coalesce(free_header_t **fh)
 {
@@ -259,7 +255,7 @@ coalesce(free_header_t **fh)
 
     return true;
 }
-}
+
 
 // Allocate a block of the given payload size and return a pointer to the payload.
 //
