@@ -242,29 +242,28 @@ split(meta_t *original, size_t csz)
     init_chunk(new_chunk, remainder, false);
 }
 
-
-
 //mm_malloc allocates a memory block of size bytes
 //and returns a pointer aligned to ALIGNMENT
-void
-split(meta_t *original, size_t csz)
+void *
+mm_malloc(size_t size)
 {
-    size_t orig_csz = get_size(original);
-    bool status = get_status(original);
+    size_t csz = align(size + 2 * hdr_size);
 
-    // Not enough space to split
-    if (orig_csz < csz + 2 * hdr_size + ALIGNMENT) {
-        return;
+    meta_t *p = first_fit(csz);
+
+    if (p != NULL) {
+        split(p, csz);
+        init_chunk(p, csz, true);  // allocate AFTER split
+    } else {
+        p = ask_os_for_chunk(csz);
+        init_chunk(p, csz, true);
     }
 
-    size_t remainder = orig_csz - csz;
+    if (debug) {
+        mm_checkheap(true);
+    }
 
-    // First chunk keeps SAME status
-    init_chunk(original, csz, status);
-
-    // Second chunk is ALWAYS free
-    meta_t *new_chunk = (meta_t *)((char *)original + csz);
-    init_chunk(new_chunk, remainder, false);
+    return (void *)((char *)p + hdr_size);
 }
 // helper function to merge the current chunk with the next/following chunk
 // if the next chunk is free, and returns a pointer to the merged chunk's header.
